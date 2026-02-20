@@ -1,34 +1,52 @@
-const express = require('express');
-const cors = require('cors');
 // Load environment variables FIRST
 require('dotenv').config();
-const app = require('./src/app')
 
-// ============================================
+const app = require('./src/app');
+const connectDB = require('./src/config/db');
+
+// ===================
 // START SERVER
-// ============================================
+// ===================
 
 const PORT = process.env.PORT || 5000;
 
-const server = app.listen(PORT, () => {
-  console.log(`
-╔════════════════════════════════════════════════════════════╗
-║                                                            ║
-║   🚀 Bookmark Manager API Server                          ║
-║                                                            ║
-║   → Local:    http://localhost:${PORT}                     ║
-║   → API:      http://localhost:${PORT}/api/bookmarks,      ║
-║               http://localhost:${PORT}/api/tags            ║
-║   → Health:   http://localhost:${PORT}/api/health          ║
-║   → Mode:     ${process.env.NODE_ENV || 'development'}     ║
-║                                                            ║
-╚════════════════════════════════════════════════════════════╝
-  `);
-});
+const startServer = async () => {
+  try {
+    // Connect to MongoDB
+    await connectDB();
 
-// Handle unhandled promise rejections
-process.on('unhandledRejection', (err, promise) => {
-  console.error(`❌ Unhandled Rejection: ${err.message}`);
-  // Close server & exit process
-  server.close(() => process.exit(1));
-});
+    // Start Express server
+    const server = app.listen(PORT, () => {
+      console.log(`
+╔═══════════════════════════════════════════════════════╗
+║     SERVICE CENTER STOCK MANAGEMENT API               ║
+╠═══════════════════════════════════════════════════════╣
+║  Status:      ✅ Running                              ║
+║  Environment: ${process.env.NODE_ENV.padEnd(41)}║
+║  Port:        ${String(PORT).padEnd(41)}║
+║  API Health:  http://localhost:${PORT}/api/health        ║
+╚═══════════════════════════════════════════════════════╝
+      `);
+    });
+
+    // Handle unhandled promise rejections
+    process.on('unhandledRejection', (err) => {
+      console.error(`❌ Unhandled Rejection: ${err.message}`);
+      server.close(() => {
+        process.exit(1);
+      });
+    });
+
+    // Handle uncaught exceptions
+    process.on('uncaughtException', (err) => {
+      console.error(`❌ Uncaught Exception: ${err.message}`);
+      process.exit(1);
+    });
+
+  } catch (error) {
+    console.error(`❌ Failed to start server: ${error.message}`);
+    process.exit(1);
+  }
+};
+
+startServer();

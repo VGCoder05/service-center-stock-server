@@ -6,13 +6,19 @@ const connectDB = require('./config/db');
 // const notFound = require('./middleware/notFound');
 
 
+// Import routes
+const authRoutes = require('./routes/auth');
+
+
 // Load environment variables
 dotenv.config();
-// Connect to database
-connectDB();
 
 // Initialize express app
 const app = express();
+
+// Connect to database
+connectDB();
+
 
 // ===================
 // MIDDLEWARE
@@ -50,8 +56,11 @@ app.get('/api/health', (req, res) => {
 });
 
 // ===================
-// API ROUTES (to be added)
+// API ROUTES
 // ===================
+
+app.use('/api/v1/auth', authRoutes);
+
 
 // Placeholder for future routes
 // app.use('/api/v1/auth', authRoutes);

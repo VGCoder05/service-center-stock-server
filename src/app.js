@@ -8,6 +8,7 @@ const connectDB = require('./config/db');
 
 // Import routes
 const authRoutes = require('./routes/auth');
+const masterRoutes = require('./routes/master');
 
 
 // Load environment variables
@@ -60,7 +61,7 @@ app.get('/api/health', (req, res) => {
 // ===================
 
 app.use('/api/v1/auth', authRoutes);
-
+app.use('/api/v1/master', masterRoutes);
 
 // Placeholder for future routes
 // app.use('/api/v1/auth', authRoutes);

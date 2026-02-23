@@ -32,7 +32,7 @@ app.use(cors({
 }));
 
 // Handle preflight
-app.options('*', cors());
+// app.options('*', cors());
 
 console.log('Frontend URL:', process.env.FRONTEND_URL);
 

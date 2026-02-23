@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
-const dotenv = require('dotenv');
+// Load environment variables
+require('dotenv').config();
 const connectDB = require('./config/db');
 // const { errorHandler } = require('./middleware/errorHandler');
 // const notFound = require('./middleware/notFound');
@@ -9,10 +10,6 @@ const connectDB = require('./config/db');
 // Import routes
 const authRoutes = require('./routes/auth');
 const masterRoutes = require('./routes/master');
-
-
-// Load environment variables
-dotenv.config();
 
 // Initialize express app
 const app = express();
@@ -31,7 +28,7 @@ app.use(cors({
     // origin: process.env.FRONTEND_URL,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
-    credentials: true
+    // credentials: true
 }));
 
 // Handle preflight

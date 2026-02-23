@@ -24,10 +24,10 @@ connectDB();
 
 // Enable CORS for frontend communication
 app.use(cors({
-    origin: 'https://service-center-stock-frontend.vercel.app', // hardcode for testing
-    // origin: process.env.FRONTEND_URL,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    // origin: 'https://service-center-stock-frontend.vercel.app', // hardcode for testing
+    origin: process.env.FRONTEND_URL,
+    // methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    // allowedHeaders: ['Content-Type', 'Authorization'],
     // credentials: true
 }));
 

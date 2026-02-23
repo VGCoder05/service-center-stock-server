@@ -15,6 +15,11 @@ const { protect } = require('../middleware/auth');
 // PUBLIC ROUTES
 // ===================
 
+// for testing
+router.get('/register', (req, res) => {
+    res.json({ message: 'Use POST method to register' });
+});
+
 // @route   POST /api/v1/auth/register
 // @desc    Register new user
 // @access  Public

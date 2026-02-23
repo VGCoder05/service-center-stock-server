@@ -27,14 +27,10 @@ connectDB();
 
 // Enable CORS for frontend communication
 app.use(cors({
-    // for vercel (serverless)
-    origin: process.env.FRONTEND_URL
-
-    // for Render or other 
-    // origin: process.env.NODE_ENV === 'production' 
-    //   ? process.env.FRONTEND_URL 
-    // : 'http://localhost:5173' /* Vite default port */ || '*',
-    // credentials: true,
+    origin: process.env.FRONTEND_URL,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    credentials: true  
 }));
 
 // Parse JSON bodies

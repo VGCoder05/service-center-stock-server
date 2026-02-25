@@ -3,7 +3,6 @@ const mongoose = require('mongoose');
 const SupplierSchema = new mongoose.Schema({
   supplierCode: {
     type: String,
-    required: [true, 'Supplier code is required'],
     unique: true,
     uppercase: true,
     trim: true,

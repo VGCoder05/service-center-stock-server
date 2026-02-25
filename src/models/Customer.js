@@ -28,7 +28,7 @@ ticketNumber: {
     maxlength: [100, 'Contact person cannot exceed 100 characters']
   },
   phone: {
-    type: number,
+    type: Number,
     trim: true,
     maxlength: [20, 'Phone cannot exceed 20 characters']
   },

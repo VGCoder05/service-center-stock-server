@@ -12,6 +12,7 @@ const authRoutes = require('./routes/auth');
 const masterRoutes = require('./routes/master');
 const billRoutes = require('./routes/bills');
 const serialRoutes = require('./routes/serials');
+const categoryRoutes = require('./routes/categories');
 
 // Initialize express app
 const app = express();
@@ -63,6 +64,7 @@ app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/master', masterRoutes);
 app.use('/api/v1/bills', billRoutes);
 app.use('/api/v1/serials', serialRoutes);
+app.use('/api/v1/categories', categoryRoutes);
 
 // Placeholder for future routes
 // app.use('/api/v1/reports', reportRoutes);

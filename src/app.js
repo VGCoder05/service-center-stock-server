@@ -26,7 +26,7 @@ connectDB();
 
 // CORS Configuration - Fix for Vercel
 app.use(cors({
-    origin: [...process.env.FRONTEND_URL],
+    origin: process.env.FRONTEND_URL.split(','),
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,

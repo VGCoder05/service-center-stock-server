@@ -10,6 +10,8 @@ const connectDB = require('./config/db');
 // Import routes
 const authRoutes = require('./routes/auth');
 const masterRoutes = require('./routes/master');
+const billRoutes = require('./routes/bills');
+const serialRoutes = require('./routes/serials');
 
 // Initialize express app
 const app = express();
@@ -24,11 +26,7 @@ connectDB();
 
 // CORS Configuration - Fix for Vercel
 app.use(cors({
-    origin: [
-        'https://service-center-stock-frontend.vercel.app',
-        'http://localhost:3000', // for local development
-        'http://localhost:5173'  // if using Vite
-    ],
+    origin: [...FRONTEND_URL],
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
@@ -36,7 +34,7 @@ app.use(cors({
     optionsSuccessStatus: 204
 }));
 
-console.log('Frontend URL:', process.env.FRONTEND_URL);
+// console.log('Frontend URL:', process.env.FRONTEND_URL);
 
 // Parse JSON bodies
 app.use(express.json({ limit: '10mb' }));
@@ -63,11 +61,11 @@ app.get('/api/health', (req, res) => {
 
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/master', masterRoutes);
+app.use('/api/v1/bills', billRoutes);
+app.use('/api/v1/serials', serialRoutes);
 
 // Placeholder for future routes
-// app.use('/api/v1/auth', authRoutes);
-// app.use('/api/v1/bills', billRoutes);
-// app.use('/api/v1/serials', serialRoutes);
+// app.use('/api/v1/reports', reportRoutes);
 
 // ===================
 // 404 HANDLER

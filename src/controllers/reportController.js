@@ -1,8 +1,5 @@
 const SerialNumber = require('../models/SerialNumber');
 const Bill = require('../models/Bill');
-const ExcelService = require('../services/excelService');
-const path = require('path');
-const fs = require('fs');
 
 // ===================
 // @desc    Get stock valuation report data
@@ -73,7 +70,7 @@ exports.getStockValuation = async (req, res, next) => {
 };
 
 // ===================
-// @desc    Export stock valuation to Excel
+// @desc    Export stock valuation to Excel (Now sends JSON for frontend)
 // @route   GET /api/v1/reports/valuation/export
 // @access  Private
 // ===================
@@ -127,24 +124,11 @@ exports.exportStockValuation = async (req, res, next) => {
         .limit(1000); // Limit for performance
     }
 
-    // Generate Excel
-    const excelService = new ExcelService();
-    const { filename, filepath } = await excelService.generateStockValuation(
-      { categories, details },
-      { startDate, endDate }
-    );
-
-    // Send file
-    res.download(filepath, filename, (err) => {
-      if (err) {
-        console.error('Download error:', err);
-      }
-      // Cleanup after download
-      setTimeout(() => {
-        if (fs.existsSync(filepath)) {
-          fs.unlinkSync(filepath);
-        }
-      }, 60000); // Delete after 1 minute
+    // Send raw data to frontend instead of generating file
+    res.status(200).json({
+      success: true,
+      data: { categories, details },
+      filters: { startDate, endDate }
     });
   } catch (error) {
     next(error);
@@ -213,7 +197,7 @@ exports.getInStockByBill = async (req, res, next) => {
 };
 
 // ===================
-// @desc    Export IN_STOCK report to Excel
+// @desc    Export IN_STOCK report to Excel (Now sends JSON for frontend)
 // @route   GET /api/v1/reports/in-stock/export
 // @access  Private
 // ===================
@@ -256,18 +240,11 @@ exports.exportInStockByBill = async (req, res, next) => {
       { $sort: { billDate: -1 } }
     ]);
 
-    // Generate Excel
-    const excelService = new ExcelService();
-    const { filename, filepath } = await excelService.generateBillWiseReport(
+    // Send raw grouped data to the frontend
+    res.status(200).json({
+      success: true,
       data,
-      { startDate, endDate }
-    );
-
-    res.download(filepath, filename, (err) => {
-      if (err) console.error('Download error:', err);
-      setTimeout(() => {
-        if (fs.existsSync(filepath)) fs.unlinkSync(filepath);
-      }, 60000);
+      filters: { startDate, endDate }
     });
   } catch (error) {
     next(error);
@@ -346,7 +323,7 @@ exports.getSPUReport = async (req, res, next) => {
 };
 
 // ===================
-// @desc    Export SPU report to Excel
+// @desc    Export SPU report to Excel (Now sends JSON for frontend)
 // @route   GET /api/v1/reports/spu/export
 // @access  Private
 // ===================
@@ -390,18 +367,11 @@ exports.exportSPUReport = async (req, res, next) => {
       { $sort: { spuDate: -1 } }
     ]);
 
-    // Generate Excel
-    const excelService = new ExcelService();
-    const { filename, filepath } = await excelService.generateSPUReport(
+    // Send raw grouped data to the frontend
+    res.status(200).json({
+      success: true,
       data,
-      { startDate, endDate, status: category }
-    );
-
-    res.download(filepath, filename, (err) => {
-      if (err) console.error('Download error:', err);
-      setTimeout(() => {
-        if (fs.existsSync(filepath)) fs.unlinkSync(filepath);
-      }, 60000);
+      filters: { startDate, endDate, status: category }
     });
   } catch (error) {
     next(error);

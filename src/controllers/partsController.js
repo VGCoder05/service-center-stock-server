@@ -282,6 +282,15 @@ exports.getPartCategories = async (req, res, next) => {
 // ===================
 exports.getPartStock = async (req, res, next) => {
   try {
+    const { 
+      currentCategory, 
+      search,
+      page = 1, 
+      limit = 25,
+      sortBy = 'createdAt',
+      sortOrder = 'desc'
+    } = req.query;
+
     const part = await PartsMaster.findById(req.params.id);
 
     if (!part) {
@@ -291,7 +300,9 @@ exports.getPartStock = async (req, res, next) => {
       });
     }
 
-    // Get category-wise count for this part
+    // ════════════════════════════════════════════
+    // Stock Summary (no pagination needed)
+    // ════════════════════════════════════════════
     const stockBreakdown = await SerialNumber.aggregate([
       { $match: { partId: part._id } },
       {
@@ -304,19 +315,44 @@ exports.getPartStock = async (req, res, next) => {
       { $sort: { _id: 1 } }
     ]);
 
-    // Get total counts
-    const totalSerials = await SerialNumber.countDocuments({ partId: part._id });
-
-    // Build response
     const categoryBreakdown = {};
     let totalValue = 0;
+    let totalSerials = 0;
     stockBreakdown.forEach(item => {
       categoryBreakdown[item._id] = {
         count: item.count,
         value: item.totalValue
       };
       totalValue += item.totalValue;
+      totalSerials += item.count;
     });
+
+    // ════════════════════════════════════════════
+    // Paginated Serials List
+    // ════════════════════════════════════════════
+    const query = { partId: part._id };
+
+    // Filter by category
+    if (currentCategory) {
+      query.currentCategory = currentCategory;
+    }
+
+    // Search by serial number
+    if (search) {
+      query.serialNumber = { $regex: search, $options: 'i' };
+    }
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const sortOptions = { [sortBy]: sortOrder === 'desc' ? -1 : 1 };
+
+    const [serials, filteredTotal] = await Promise.all([
+      SerialNumber.find(query)
+        .populate('billId', 'voucherNumber billDate')
+        .sort(sortOptions)
+        .skip(skip)
+        .limit(parseInt(limit)),
+      SerialNumber.countDocuments(query)
+    ]);
 
     res.status(200).json({
       success: true,
@@ -326,7 +362,14 @@ exports.getPartStock = async (req, res, next) => {
           totalSerials,
           totalValue,
           categoryBreakdown
-        }
+        },
+        serials
+      },
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: filteredTotal,
+        pages: Math.ceil(filteredTotal / parseInt(limit))
       }
     });
   } catch (error) {
@@ -341,7 +384,7 @@ exports.getPartStock = async (req, res, next) => {
 // ===================
 exports.getPartSerials = async (req, res, next) => {
   try {
-    const { currentCategory, page = 1, limit = 25 } = req.query;
+    const { currentCategory } = req.query;
 
     const part = await PartsMaster.findById(req.params.id);
     if (!part) {
@@ -356,16 +399,9 @@ exports.getPartSerials = async (req, res, next) => {
       query.currentCategory = currentCategory;
     }
 
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-
-    const [serials, total] = await Promise.all([
-      SerialNumber.find(query)
-        .populate('billId', 'voucherNumber billDate')
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(parseInt(limit)),
-      SerialNumber.countDocuments(query)
-    ]);
+    const serials = await SerialNumber.find(query)
+      .populate('billId', 'voucherNumber billDate')
+      .sort({ createdAt: -1 });
 
     res.status(200).json({
       success: true,
@@ -375,13 +411,8 @@ exports.getPartSerials = async (req, res, next) => {
           partCode: part.partCode,
           partName: part.partName
         },
-        serials
-      },
-      pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
-        total,
-        pages: Math.ceil(total / parseInt(limit))
+        serials,
+        total: serials.length
       }
     });
   } catch (error) {

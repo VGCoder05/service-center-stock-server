@@ -15,6 +15,7 @@ const serialRoutes = require('./routes/serials');
 const categoryRoutes = require('./routes/categories');
 const dashboardRoutes = require('./routes/dashboard');
 const reportRoutes = require('./routes/reports');
+const importRoutes = require('./routes/import');
 
 // Initialize express app
 const app = express();
@@ -69,6 +70,7 @@ app.use('/api/v1/serials', serialRoutes);
 app.use('/api/v1/categories', categoryRoutes);
 app.use('/api/v1/dashboard', dashboardRoutes);
 app.use('/api/v1/reports', reportRoutes);
+app.use('/api/v1/import', importRoutes);
 
 // Placeholder for future routes
 

@@ -18,7 +18,10 @@ const {
   updatePart,
   deletePart,
   getAllPartsList,
-  getPartCategories
+  getPartCategories,
+  getPartStock,       
+  getPartSerials,     
+  getPartsWithStock
 } = require('../controllers/partsController');
 
 const {
@@ -63,15 +66,21 @@ router.get('/parts/list/all', getAllPartsList);
 // Get unique categories
 router.get('/parts/categories', getPartCategories);
 
+
+router.get('/parts/with-stock', getPartsWithStock);
+
 // CRUD routes
 router.route('/parts')
   .get(getParts)
   .post(canModify, createPart);
 
 router.route('/parts/:id')
-  .get(getPart)
-  .put(canModify, updatePart)
-  .delete(adminOnly, deletePart);
+.get(getPart)
+.put(canModify, updatePart)
+.delete(adminOnly, deletePart);
+
+router.get('/parts/:id/stock',getPartStock)
+router.get('/parts/:id/serials',getPartSerials)
 
 // ===================
 // CUSTOMER ROUTES

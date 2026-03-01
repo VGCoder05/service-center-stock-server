@@ -201,36 +201,112 @@ exports.createSerial = async (req, res, next) => {
         error: 'Bill not found'
       });
     }
+    // ════════════════════════════════════════════════════════
+    // SMART PART RESOLUTION
+    // ════════════════════════════════════════════════════════
+    let resolvedPartId = partId;
+    let resolvedPartCode = partCode;
+    let resolvedPartName = partName;
 
-    // Get part details if partId provided
-    let partDetails = { partCode, partName };
     if (partId) {
+      // CASE A: User selected a part from dropdown (partId provided)
       const part = await PartsMaster.findById(partId);
       if (part) {
-        partDetails.partCode = part.partCode;
-        partDetails.partName = part.partName;
+        resolvedPartCode = part.partCode;
+        resolvedPartName = part.partName;
+      } else {
+        return res.status(400).json({
+          success: false,
+          error: 'Selected part not found in Parts Master'
+        });
+      }
+    } else if (partCode) {
+      // CASE B: User typed a part code (no partId, but partCode given)
+      let part = await PartsMaster.findOne({
+        partCode: partCode.toUpperCase()
+      });
+
+      if (part) {
+        // Part exists → link to it
+        resolvedPartId = part._id;
+        resolvedPartCode = part.partCode;
+        resolvedPartName = part.partName;
+      } else {
+        // Part doesn't exist → auto-create it
+        part = await PartsMaster.create({
+          partCode: partCode.toUpperCase(),
+          partName: partName || partCode,
+          avgUnitPrice: unitPrice || 0,
+          isActive: true
+        });
+        resolvedPartId = part._id;
+        resolvedPartCode = part.partCode;
+        resolvedPartName = part.partName;
+      }
+    } else if (partName) {
+      // CASE C: User typed only a part name (no code, no id)
+      // Try to find by name (fuzzy match)
+      let part = await PartsMaster.findOne({
+        partName: { $regex: `^${partName.trim()}$`, $options: 'i' }
+      });
+
+      if (part) {
+        // Found existing part with same name → link
+        resolvedPartId = part._id;
+        resolvedPartCode = part.partCode;
+        resolvedPartName = part.partName;
+      } else {
+        // Not found → auto-create with generated code
+        const partCount = await PartsMaster.countDocuments();
+        const autoCode = `PART-${String(partCount + 1).padStart(4, '0')}`;
+
+        part = await PartsMaster.create({
+          partCode: autoCode,
+          partName: partName.trim(),
+          avgUnitPrice: unitPrice || 0,
+          isActive: true
+        });
+        resolvedPartId = part._id;
+        resolvedPartCode = part.partCode;
+        resolvedPartName = part.partName;
       }
     }
+    // ════════════════════════════════════════════════════════
 
-    // Create serial number
+    // Create serial number (now ALWAYS linked to PartsMaster)
     const serial = await SerialNumber.create({
       serialNumber,
       billId,
       voucherNumber: bill.voucherNumber,
       companyBillNumber: bill.companyBillNumber,
       billDate: bill.billDate,
-      partId,
-      partCode: partDetails.partCode,
-      partName: partDetails.partName,
+      partId: resolvedPartId,       // ← Now always has a value
+      partCode: resolvedPartCode,   // ← Synced with PartsMaster
+      partName: resolvedPartName,   // ← Synced with PartsMaster
       unitPrice,
       supplierId: bill.supplierId,
       supplierName: bill.supplierName,
       currentCategory: currentCategory || 'UNCATEGORIZED',
-      categorizedDate: currentCategory && currentCategory !== 'UNCATEGORIZED' ? new Date() : null,
+      categorizedDate: currentCategory && currentCategory !== 'UNCATEGORIZED'
+        ? new Date()
+        : null,
       context,
       createdBy: req.user.id,
       createdByName: req.user.fullName
     });
+
+    // ════════════════════════════════════════════════════════
+    // 🔗 CHANGE 1b: UPDATE PART'S AVERAGE PRICE
+    // ════════════════════════════════════════════════════════
+    if (resolvedPartId) {
+      await updatePartAvgPrice(resolvedPartId);
+    }
+
+    // Update bill summary
+    const updatedBill = await Bill.findById(billId);
+    if (updatedBill) {
+      await updatedBill.updateCategorySummary();
+    }
 
     res.status(201).json({
       success: true,
@@ -304,40 +380,115 @@ exports.createBulkSerials = async (req, res, next) => {
       });
     }
 
-    // Prepare serial documents
-    const serialDocs = await Promise.all(items.map(async (item) => {
-      let partDetails = { partCode: item.partCode, partName: item.partName };
-      
-      if (item.partId) {
-        const part = await PartsMaster.findById(item.partId);
+    
+    // ════════════════════════════════════════════════════════
+    //  BATCH PART RESOLUTION
+    // Cache resolved parts to avoid duplicate DB calls
+    // ════════════════════════════════════════════════════════
+    const partCache = new Map(); // key: partCode or partName → value: part doc
+
+    const resolvePartForItem = async (item) => {
+      const { partId, partCode, partName, unitPrice } = item;
+
+      // Check cache first (by partCode or partName)
+      const cacheKey = partCode?.toUpperCase() || partName?.trim().toLowerCase();
+      if (cacheKey && partCache.has(cacheKey)) {
+        return partCache.get(cacheKey);
+      }
+
+      let resolved = { partId: null, partCode: null, partName: null };
+
+      if (partId) {
+        // User selected from dropdown
+        const part = await PartsMaster.findById(partId);
         if (part) {
-          partDetails.partCode = part.partCode;
-          partDetails.partName = part.partName;
+          resolved = { partId: part._id, partCode: part.partCode, partName: part.partName };
+        }
+      } else if (partCode) {
+        // Try find by code
+        let part = await PartsMaster.findOne({ partCode: partCode.toUpperCase() });
+        if (part) {
+          resolved = { partId: part._id, partCode: part.partCode, partName: part.partName };
+        } else {
+          // Auto-create
+          part = await PartsMaster.create({
+            partCode: partCode.toUpperCase(),
+            partName: partName || partCode,
+            avgUnitPrice: unitPrice || 0,
+            isActive: true
+          });
+          resolved = { partId: part._id, partCode: part.partCode, partName: part.partName };
+        }
+      } else if (partName) {
+        // Try find by name
+        let part = await PartsMaster.findOne({
+          partName: { $regex: `^${partName.trim()}$`, $options: 'i' }
+        });
+        if (part) {
+          resolved = { partId: part._id, partCode: part.partCode, partName: part.partName };
+        } else {
+          // Auto-create with generated code
+          const partCount = await PartsMaster.countDocuments();
+          const autoCode = `PART-${String(partCount + 1).padStart(4, '0')}`;
+          part = await PartsMaster.create({
+            partCode: autoCode,
+            partName: partName.trim(),
+            avgUnitPrice: unitPrice || 0,
+            isActive: true
+          });
+          resolved = { partId: part._id, partCode: part.partCode, partName: part.partName };
         }
       }
 
-      return {
+      // Cache it
+      if (cacheKey) {
+        partCache.set(cacheKey, resolved);
+      }
+
+      return resolved;
+    };
+
+    const serialDocs = [];
+    for (const item of items) {
+      const resolvedPart = await resolvePartForItem(item);
+
+      serialDocs.push({
         serialNumber: item.serialNumber.toUpperCase(),
         billId,
         voucherNumber: bill.voucherNumber,
         companyBillNumber: bill.companyBillNumber,
         billDate: bill.billDate,
-        partId: item.partId,
-        partCode: partDetails.partCode,
-        partName: partDetails.partName,
+        partId: resolvedPart.partId,
+        partCode: resolvedPart.partCode,
+        partName: resolvedPart.partName,
         unitPrice: item.unitPrice,
         supplierId: bill.supplierId,
         supplierName: bill.supplierName,
         currentCategory: item.currentCategory || 'UNCATEGORIZED',
-        categorizedDate: item.currentCategory && item.currentCategory !== 'UNCATEGORIZED' ? new Date() : null,
+        categorizedDate: item.currentCategory && item.currentCategory !== 'UNCATEGORIZED'
+          ? new Date()
+          : null,
         context: item.context,
         createdBy: req.user.id,
         createdByName: req.user.fullName
-      };
-    }));
+      });
+    }
 
     // Insert all serial numbers
     const serials = await SerialNumber.insertMany(serialDocs);
+
+     // ════════════════════════════════════════════════════════
+    // 🔗 Update avg price for all affected parts
+    // ════════════════════════════════════════════════════════
+    const affectedPartIds = [...new Set(
+      serialDocs
+        .filter(doc => doc.partId)
+        .map(doc => doc.partId.toString())
+    )];
+    
+    for (const pid of affectedPartIds) {
+      await updatePartAvgPrice(new mongoose.Types.ObjectId(pid));
+    }
 
     // Update bill summary
     await bill.updateCategorySummary();
@@ -492,5 +643,29 @@ exports.checkSerialExists = async (req, res, next) => {
     });
   } catch (error) {
     next(error);
+  }
+};
+
+
+// ════════════════════════════════════════════════════════
+// HELPER: Update average price of a part based on all its serials
+// ════════════════════════════════════════════════════════
+const updatePartAvgPrice = async (partId) => {
+  const result = await SerialNumber.aggregate([
+    { $match: { partId: partId } },
+    {
+      $group: {
+        _id: '$partId',
+        avgPrice: { $avg: '$unitPrice' },
+        totalSerials: { $sum: 1 }
+      }
+    }
+  ]);
+
+  if (result.length > 0) {
+    await PartsMaster.findByIdAndUpdate(partId, {
+      avgUnitPrice: Math.round(result[0].avgPrice * 100) / 100,
+      updatedAt: new Date()
+    });
   }
 };

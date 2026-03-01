@@ -1,4 +1,5 @@
 const PartsMaster = require('../models/PartsMaster');
+const SerialNumber = require('../models/SerialNumber');
 
 // ===================
 // @desc    Get all parts
@@ -211,7 +212,16 @@ exports.deletePart = async (req, res, next) => {
       });
     }
 
-    // TODO: Check if part has serial numbers before deleting
+    // ════════════════════════════════════════════════════════
+    // 🔗 SAFETY CHECK: Don't delete if serials exist
+    // ════════════════════════════════════════════════════════
+    const serialCount = await SerialNumber.countDocuments({ partId: part._id });
+    if (serialCount > 0) {
+      return res.status(400).json({
+        success: false,
+        error: `Cannot delete part "${part.partName}" — it has ${serialCount} serial number(s) linked to it. Deactivate it instead.`
+      });
+    }
 
     await part.deleteOne();
 
@@ -259,6 +269,199 @@ exports.getPartCategories = async (req, res, next) => {
     res.status(200).json({
       success: true,
       data: categories.sort()
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ===================
+// @desc    Get part with stock info (serial counts by category)
+// @route   GET /api/v1/master/parts/:id/stock
+// @access  Private
+// ===================
+exports.getPartStock = async (req, res, next) => {
+  try {
+    const part = await PartsMaster.findById(req.params.id);
+
+    if (!part) {
+      return res.status(404).json({
+        success: false,
+        error: 'Part not found'
+      });
+    }
+
+    // Get category-wise count for this part
+    const stockBreakdown = await SerialNumber.aggregate([
+      { $match: { partId: part._id } },
+      {
+        $group: {
+          _id: '$currentCategory',
+          count: { $sum: 1 },
+          totalValue: { $sum: '$unitPrice' }
+        }
+      },
+      { $sort: { _id: 1 } }
+    ]);
+
+    // Get total counts
+    const totalSerials = await SerialNumber.countDocuments({ partId: part._id });
+
+    // Build response
+    const categoryBreakdown = {};
+    let totalValue = 0;
+    stockBreakdown.forEach(item => {
+      categoryBreakdown[item._id] = {
+        count: item.count,
+        value: item.totalValue
+      };
+      totalValue += item.totalValue;
+    });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        part,
+        stock: {
+          totalSerials,
+          totalValue,
+          categoryBreakdown
+        }
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ===================
+// @desc    Get all serials for a specific part
+// @route   GET /api/v1/master/parts/:id/serials
+// @access  Private
+// ===================
+exports.getPartSerials = async (req, res, next) => {
+  try {
+    const { currentCategory, page = 1, limit = 25 } = req.query;
+
+    const part = await PartsMaster.findById(req.params.id);
+    if (!part) {
+      return res.status(404).json({
+        success: false,
+        error: 'Part not found'
+      });
+    }
+
+    const query = { partId: part._id };
+    if (currentCategory) {
+      query.currentCategory = currentCategory;
+    }
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    const [serials, total] = await Promise.all([
+      SerialNumber.find(query)
+        .populate('billId', 'voucherNumber billDate')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(parseInt(limit)),
+      SerialNumber.countDocuments(query)
+    ]);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        part: {
+          _id: part._id,
+          partCode: part.partCode,
+          partName: part.partName
+        },
+        serials
+      },
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        pages: Math.ceil(total / parseInt(limit))
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ===================
+// @desc    Get all parts WITH stock counts (for parts list page)
+// @route   GET /api/v1/master/parts/with-stock
+// @access  Private
+// ===================
+exports.getPartsWithStock = async (req, res, next) => {
+  try {
+    const {
+      search,
+      category,
+      isActive,
+      page = 1,
+      limit = 25,
+      sortBy = 'partName',
+      sortOrder = 'asc'
+    } = req.query;
+
+    // Build match stage
+    const matchStage = {};
+    if (search) {
+      matchStage.$or = [
+        { partCode: { $regex: search, $options: 'i' } },
+        { partName: { $regex: search, $options: 'i' } }
+      ];
+    }
+    if (category) matchStage.category = category;
+    if (isActive !== undefined) matchStage.isActive = isActive === 'true';
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const sortOptions = { [sortBy]: sortOrder === 'desc' ? -1 : 1 };
+
+    const [parts, totalCount] = await Promise.all([
+      PartsMaster.aggregate([
+        { $match: matchStage },
+        {
+          $lookup: {
+            from: 'serialnumbers',   // MongoDB collection name (lowercase + plural)
+            localField: '_id',
+            foreignField: 'partId',
+            as: 'serials'
+          }
+        },
+        {
+          $addFields: {
+            totalSerials: { $size: '$serials' },
+            inStockCount: {
+              $size: {
+                $filter: {
+                  input: '$serials',
+                  cond: { $eq: ['$$this.currentCategory', 'IN_STOCK'] }
+                }
+              }
+            },
+            totalValue: { $sum: '$serials.unitPrice' }
+          }
+        },
+        { $project: { serials: 0 } },  // Remove the full serials array
+        { $sort: sortOptions },
+        { $skip: skip },
+        { $limit: parseInt(limit) }
+      ]),
+      PartsMaster.countDocuments(matchStage)
+    ]);
+
+    res.status(200).json({
+      success: true,
+      data: parts,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: totalCount,
+        pages: Math.ceil(totalCount / parseInt(limit))
+      }
     });
   } catch (error) {
     next(error);

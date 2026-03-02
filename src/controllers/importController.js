@@ -5,6 +5,9 @@ const SerialNumber = require('../models/SerialNumber');
 const Supplier = require('../models/Supplier');
 const CategoryMovement = require('../models/CategoryMovement'); // Assuming you still have this
 
+// Helper to escape regex special characters
+const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 // ===================
 // @desc    Bulk import bills from parsed Excel data
 // @route   POST /api/v1/import/excel
@@ -32,168 +35,220 @@ exports.importExcel = async (req, res, next) => {
       suppliersCreated: 0,
       suppliersExisting: 0,
       serialsCreated: 0,
+      serialsSkipped: 0,
       errors: [],
       details: []
     };
 
     for (const billData of bills) {
-      try {
-        const { billDate, voucherNumber, supplierName, items, totalAmount } = billData;
+      const { billDate, voucherNumber, supplierName, items, totalAmount } = billData;
 
-        // 1. Check if bill already exists
-        const existingBill = await Bill.findOne({ voucherNumber }).session(session);
-        if (existingBill) {
-          results.billsSkipped++;
-          results.errors.push(`Bill #${voucherNumber} already exists — skipped`);
-          continue;
+      // 1. Check if bill already exists
+      const existingBill = await Bill.findOne({ voucherNumber }).session(session);
+      if (existingBill) {
+        results.billsSkipped++;
+        results.errors.push(`Bill #${voucherNumber} already exists — skipped`);
+        continue;
+      }
+
+      // 2. Find or create supplier (with regex escaping)
+      let supplier = await Supplier.findOne({
+        supplierName: {
+          $regex: `^${escapeRegex(supplierName.trim())}$`,
+          $options: 'i'
         }
+      }).session(session);
 
-        // 2. Find or create supplier
-        let supplier = await Supplier.findOne({
-          supplierName: { $regex: `^${supplierName.trim()}$`, $options: 'i' }
-        }).session(session);
-
-        if (!supplier) {
-          supplier = await Supplier.create(
-            [{ supplierName: supplierName.trim(), isActive: true }],
-            { session }
-          );
-          supplier = supplier[0];
-          results.suppliersCreated++;
-        } else {
-          results.suppliersExisting++;
-        }
-
-        // Calculate total amount if not provided
-        const calculatedTotal = items.reduce((sum, item) => {
-          return sum + item.serialNumbers.reduce((s, sn) => s + sn.unitPrice, 0);
-        }, 0);
-
-        // 3. Create the Bill (WITHOUT items array, matches actual schema)
-        const bill = await Bill.create(
-          [{
-            voucherNumber,
-            billDate: new Date(billDate),
-            supplierId: supplier._id,
-            supplierName: supplier.supplierName,
-            totalBillAmount: totalAmount || calculatedTotal,
-            notes: 'Imported from Excel',
-            receivedBy: req.user?._id,        // Optional: Assuming you have req.user from auth middleware
-            receivedByName: req.user?.name    // Optional
-          }],
+      if (!supplier) {
+        [supplier] = await Supplier.create(
+          [{ supplierName: supplierName.trim(), isActive: true }],
           { session }
         );
+        results.suppliersCreated++;
+      } else {
+        results.suppliersExisting++;
+      }
 
-        let serialsCountForBill = 0;
+      // Calculate total from items if totalAmount not provided
+      const calculatedTotal = items.reduce((sum, item) => {
+        return sum + item.serialNumbers.reduce((s, sn) => s + sn.unitPrice, 0);
+      }, 0);
 
-        // 4. Process each item — find/create parts and serials
-        for (const item of items) {
-          const { partCode, partName, serialNumbers } = item;
+      // 3. Create the Bill
+      const [bill] = await Bill.create(
+        [{
+          voucherNumber,
+          billDate: new Date(billDate),
+          supplierId: supplier._id,
+          supplierName: supplier.supplierName,
+          totalBillAmount: totalAmount || calculatedTotal,
+          notes: 'Imported from Excel',
+          receivedBy: req.user?._id,
+          receivedByName: req.user?.name
+        }],
+        { session }
+      );
 
-          // Find or create part
-          let part = await PartsMaster.findOne({
-            partCode: partCode.toUpperCase()
-          }).session(session);
+      let serialsCountForBill = 0;
 
-          if (!part) {
-            part = await PartsMaster.create(
-              [{
-                partCode: partCode.toUpperCase(),
-                partName: partName,
-                unit: 'Pcs', // Match Enum ('Pcs' instead of 'PCS')
-                isActive: true,
-                avgUnitPrice: serialNumbers.length > 0
-                  ? serialNumbers.reduce((s, sn) => s + sn.unitPrice, 0) / serialNumbers.length
-                  : 0
-              }],
-              { session }
-            );
-            part = part[0];
-            results.partsCreated++;
-          } else {
-            results.partsExisting++;
-          }
+      const categorySummary = {
+        IN_STOCK: 0,
+        SPU_PENDING: 0,
+        SPU_CLEARED: 0,
+        AMC: 0,
+        OG: 0,
+        RETURN: 0,
+        RECEIVED_FOR_OTHERS: 0,
+        UNCATEGORIZED: 0
+      };
+      let totalCategorizedValue = 0;
 
-          // 5. Create Serial Numbers (Denormalized fields required by your schema)
-          for (const sn of serialNumbers) {
-            // Check for duplicate serial
-            const existingSerial = await SerialNumber.findOne({
-              serialNumber: sn.serialNumber,
-            }).session(session);
+      // 4. Process each item
+      for (const item of items) {
+        const { partCode, partName, serialNumbers } = item;
 
-            if (existingSerial) {
-              results.errors.push(
-                `Serial "${sn.serialNumber}" for part ${partCode} already exists — skipped`
-              );
-              continue;
-            }
+        // Find or create part
+        let part = await PartsMaster.findOne({
+          partCode: partCode.toUpperCase()
+        }).session(session);
 
-            const categoryToSet = sn.category || 'UNCATEGORIZED';
-
-            const serial = await SerialNumber.create(
-              [{
-                serialNumber: sn.serialNumber,
-                billId: bill[0]._id,
-                voucherNumber: bill[0].voucherNumber,
-                billDate: bill[0].billDate,
-                
-                partId: part._id,
-                partCode: part.partCode,
-                partName: part.partName,
-                unitPrice: sn.unitPrice,
-                
-                supplierId: supplier._id,
-                supplierName: supplier.supplierName,
-                
-                currentCategory: categoryToSet,
-                categorizedDate: categoryToSet !== 'UNCATEGORIZED' ? new Date() : null,
-                
-                context: {
-                  remarks: sn.notes || ''
-                },
-                createdBy: req.user?._id,
-                createdByName: req.user?.name
-              }],
-              { session }
-            );
-
-            // Create initial category movement
-            if (CategoryMovement) {
-                await CategoryMovement.create(
-                  [{
-                    serialId: serial[0]._id,
-                    partId: part._id,
-                    billId: bill[0]._id,
-                    fromCategory: null,
-                    toCategory: categoryToSet,
-                    movedAt: new Date(),
-                    reason: `Imported from Excel — Bill #${voucherNumber}`,
-                    movedBy: req.user?._id
-                  }],
-                  { session }
-                );
-            }
-
-            serialsCountForBill++;
-            results.serialsCreated++;
-          }
+        if (!part) {
+          [part] = await PartsMaster.create(
+            [{
+              partCode: partCode.toUpperCase(),
+              partName: partName,
+              unit: 'Pcs',
+              isActive: true,
+              avgUnitPrice: serialNumbers.length > 0
+                ? serialNumbers.reduce((s, sn) => s + sn.unitPrice, 0) / serialNumbers.length
+                : 0
+            }],
+            { session }
+          );
+          results.partsCreated++;
+        } else {
+          results.partsExisting++;
         }
 
-        // 6. Update the Bill Category Summary 
-        // We do this manually because the 'post-save' hook in SerialNumber might not have the session context
-        await bill[0].updateCategorySummary();
+        // 5. Create Serial Numbers
+        for (const sn of serialNumbers) {
 
-        results.billsCreated++;
-        results.details.push({
-          voucherNumber,
-          supplierName: supplier.supplierName,
-          itemsCount: items.length,
-          serialsCount: serialsCountForBill
-        });
+          const existingSerial = await SerialNumber.findOne({
+            serialNumber: sn.serialNumber,
+            partId: part._id,
+            billId: bill._id
+          }).session(session);
 
-      } catch (billError) {
-        results.errors.push(`Bill #${billData.voucherNumber}: ${billError.message}`);
+          if (existingSerial) {
+            results.serialsSkipped++;
+            results.errors.push(
+              `Serial "${sn.serialNumber}" for part ${partCode} in Bill #${voucherNumber} already exists — skipped`
+            );
+            continue;
+          }
+
+          const categoryToSet = sn.category || 'UNCATEGORIZED';
+
+          const [serial] = await SerialNumber.create(
+            [{
+              serialNumber: sn.serialNumber,
+              billId: bill._id,
+              voucherNumber: bill.voucherNumber,
+              billDate: bill.billDate,
+
+              partId: part._id,
+              partCode: part.partCode,
+              partName: part.partName,
+              unitPrice: sn.unitPrice,
+
+              supplierId: supplier._id,
+              supplierName: supplier.supplierName,
+
+              currentCategory: categoryToSet,
+              categorizedDate: categoryToSet !== 'UNCATEGORIZED' ? new Date() : null,
+
+              context: {
+                remarks: sn.notes || ''
+              },
+              createdBy: req.user?._id,
+              createdByName: req.user?.name
+            }],
+            { session }
+          );
+
+          // Create initial category movement
+          if (CategoryMovement) {
+            await CategoryMovement.create(
+              [{
+                // Serial Reference
+                serialNumberId: serial._id,
+                serialNumber: sn.serialNumber,
+
+                // Bill Reference
+                billId: bill._id,
+                voucherNumber: bill.voucherNumber,
+
+                // Movement
+                movementType: 'INITIAL_ENTRY',
+                fromCategory: null,
+                toCategory: categoryToSet,
+
+                // Context snapshot at time of import
+                contextSnapshot: {
+                  unitPrice: sn.unitPrice,
+                  partCode: part.partCode,
+                  partName: part.partName,
+                  remarks: sn.notes || ''
+                },
+
+                // Reason
+                reason: `Imported from Excel — Bill #${voucherNumber}`,
+
+                // Audit
+                performedBy: req.user?._id,
+                performedByName: req.user?.name,
+
+                timestamp: new Date()
+              }],
+              { session }
+            );
+          }
+
+          if (categorySummary.hasOwnProperty(categoryToSet)) {
+            categorySummary[categoryToSet]++;
+          }
+          if (categoryToSet !== 'UNCATEGORIZED') {
+            totalCategorizedValue += sn.unitPrice;
+          }
+
+          serialsCountForBill++;
+          results.serialsCreated++;
+        }
       }
+
+      // 6. Update bill summary using in-memory data WITH session
+      //    Replaces the broken: await bill.updateCategorySummary()
+      await Bill.updateOne(
+        { _id: bill._id },
+        {
+          $set: {
+            totalSerialNumbers: serialsCountForBill,
+            categorySummary,
+            totalCategorizedValue,
+            isFullyCategorized:
+              categorySummary.UNCATEGORIZED === 0 && serialsCountForBill > 0
+          }
+        },
+        { session }
+      );
+
+      results.billsCreated++;
+      results.details.push({
+        voucherNumber,
+        supplierName: supplier.supplierName,
+        itemsCount: items.length,
+        serialsCount: serialsCountForBill
+      });
     }
 
     await session.commitTransaction();
@@ -220,6 +275,7 @@ exports.importExcel = async (req, res, next) => {
 exports.validateImport = async (req, res, next) => {
   try {
     const { bills } = req.body;
+    // console.log(bills)
 
     if (!bills || !Array.isArray(bills) || bills.length === 0) {
       return res.status(400).json({

@@ -59,7 +59,6 @@ exports.register = async (req, res, next) => {
 exports.login = async (req, res, next) => {
   try {
     const { email, password } = req.body;
-
     // Validate email & password provided
     if (!email || !password) {
       return res.status(400).json({

@@ -291,7 +291,10 @@ exports.getSPUReport = async (req, res, next) => {
               partName: '$partName',
               unitPrice: '$unitPrice',
               voucherNumber: '$voucherNumber',
-              context: '$context'
+              companyBillNumber: '$companyBillNumber',      // ✅ New
+              billDate: '$billDate',                        // ✅ New
+              context: '$context',
+              note: '$note'
             }
           },
           totalValue: { $sum: '$unitPrice' },
@@ -359,7 +362,11 @@ exports.exportSPUReport = async (req, res, next) => {
               serialNumber: '$serialNumber',
               partName: '$partName',
               unitPrice: '$unitPrice',
-              context: '$context'
+              voucherNumber: '$voucherNumber',
+              companyBillNumber: '$companyBillNumber',      // ✅ NEW
+              billDate: '$billDate',                        // ✅ NEW
+              context: '$context',
+              note: '$note'
             }
           }
         }
